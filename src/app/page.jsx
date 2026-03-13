@@ -1,38 +1,70 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useEffect, useMemo, useState } from 'react';
 import { writingStyles } from '../../styles.js';
+import { getAssistantText } from '../lib/getAssistantText.js';
+import InputPanel from './components/InputPanel';
+import OutputPanel from './components/OutputPanel';
+import SettingsPanel from './components/SettingsPanel';
 
+const SETTINGS_KEY = 'selfimpragent-settings';
+const DEFAULT_TEMPERATURE = 0.7;
+const DEFAULT_MAX_TOKENS = 2000;
+const DEFAULT_MODEL = 'claude-sonnet';
 
-function getAssistantText(message) {
-  if (!message) return '';
-  if (Array.isArray(message.parts)) {
-    return message.parts
-      .filter((part) => part.type === 'text')
-      .map((part) => part.text ?? '')
-      .join('');
+function loadSettings() {
+  if (typeof window === 'undefined') return { temperature: DEFAULT_TEMPERATURE, maxTokens: DEFAULT_MAX_TOKENS, model: DEFAULT_MODEL };
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { temperature: DEFAULT_TEMPERATURE, maxTokens: DEFAULT_MAX_TOKENS, model: DEFAULT_MODEL };
+    const parsed = JSON.parse(raw);
+    const validModels = ['claude-sonnet', 'gpt', 'mistral'];
+    return {
+      temperature: typeof parsed.temperature === 'number' ? parsed.temperature : DEFAULT_TEMPERATURE,
+      maxTokens: typeof parsed.maxTokens === 'number' ? parsed.maxTokens : DEFAULT_MAX_TOKENS,
+      model: validModels.includes(parsed.model) ? parsed.model : DEFAULT_MODEL,
+    };
+  } catch {
+    return { temperature: DEFAULT_TEMPERATURE, maxTokens: DEFAULT_MAX_TOKENS, model: DEFAULT_MODEL };
   }
-  if (typeof message.content === 'string') return message.content;
-  return '';
 }
 
 export default function Chat() {
   const [selectedStyle, setSelectedStyle] = useState(writingStyles[0].id);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const stylePrompt = writingStyles.find(s => s.id === selectedStyle)?.prompt || "";
-  const { messages, sendMessage, status } = useChat({
-    body: { stylePrompt },
-  });
+  const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE);
+  const [maxTokens, setMaxTokens] = useState(DEFAULT_MAX_TOKENS);
+  const [hasLoadedSettings, setHasLoadedSettings] = useState(false);
+
+  useEffect(() => {
+    const s = loadSettings();
+    setTemperature(s.temperature);
+    setMaxTokens(s.maxTokens);
+    setSelectedModel(s.model);
+    setHasLoadedSettings(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedSettings || typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ temperature, maxTokens, model: selectedModel }));
+    } catch {
+      /* ignore */
+    }
+  }, [temperature, maxTokens, selectedModel, hasLoadedSettings]);
+  
+
+  const stylePrompt = writingStyles.find((s) => s.id === selectedStyle)?.prompt || '';
+  const { messages, sendMessage, status } = useChat({ body: { stylePrompt } });
+
   const latestAssistantMessage = useMemo(
     () => [...messages].reverse().find((m) => m.role === 'assistant'),
     [messages]
   );
-
   const output = useMemo(() => getAssistantText(latestAssistantMessage), [latestAssistantMessage]);
 
   const isLoading = status === 'streaming' || status === 'submitted';
@@ -56,150 +88,27 @@ export default function Chat() {
 
   return (
     <div className="background" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      
-      {/* 50/50 split */}
+      <SettingsPanel
+        temperature={temperature}
+        maxTokens={maxTokens}
+        selectedModel={selectedModel}
+        onTemperatureChange={setTemperature}
+        onMaxTokensChange={setMaxTokens}
+        onModelChange={setSelectedModel}
+      />
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', minHeight: 0 }}>
-        {/* LEFT — Input */}
-        <form
+        <InputPanel
+          input={input}
+          selectedStyle={selectedStyle}
+          isLoading={isLoading}
+          output={output}
+          copied={copied}
+          onInputChange={setInput}
+          onStyleChange={setSelectedStyle}
           onSubmit={handleSubmit}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            borderRight: '1px solid var(--border-default)',
-            minHeight: 0,
-          }}
-        >
-          <div
-            className=""
-            style={{
-              padding: '0.625rem 1.25rem',
-              borderBottom: '1px solid var(--border-default)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
-              Input
-            </span>
-          </div>
-
-          <textarea
-            className="background text-primary"
-            style={{
-              flex: 1,
-              resize: 'none',
-              border: 'none',
-              outline: 'none',
-              padding: '1.25rem',
-              fontSize: '0.9375rem',
-              lineHeight: 1.65,
-              fontFamily: 'inherit',
-              color: 'var(--text-primary)',
-              background: 'var(--background)',
-            }}
-            value={input}
-            placeholder="Paste your AI-sounding text here…"
-            onChange={(e) => setInput(e.currentTarget.value)}
-          />
-
-          <div
-            style={{
-              padding: '0.75rem 1.25rem',
-              borderTop: '1px solid var(--border-default)',
-              flexShrink: 0,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              flexDirection: 'row',
-            }}
-          >
-            <select
-              className="select accent-btn appearance-none"
-              onChange={(e) => setSelectedStyle(e.target.value)}
-              value={selectedStyle}
-              style={{ flex: 1, padding: '0.5rem 1.25rem', minWidth: 0 }}
-            >
-              <option disabled={true}>Pick a Style</option>
-              {writingStyles.map(style => (
-                <option key={style.id} value={style.id}>
-                  {style.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              className="accent-btn"
-              disabled={!input.trim() || isLoading}
-              style={{
-                flex: 1,
-                padding: '0.5rem 1.25rem',
-                minWidth: 0,
-                opacity: !input.trim() || isLoading ? 0.45 : 1,
-                cursor: !input.trim() || isLoading ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isLoading ? 'Humanizing…' : 'Humanize'}
-            </button>
-            <button
-              type="button"
-              onClick={handleCopy}
-              disabled={!output.trim()}
-              className="accent-btn"
-              style={{
-                flex: 1,
-                padding: '0.5rem 1.25rem',
-                minWidth: 0,
-                opacity: !output.trim() ? 0.45 : 1,
-                cursor: !output.trim() ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {copied ? '✓ Copied' : 'Copy Text'}
-            </button>
-          </div>
-        </form>
-
-        {/* RIGHT — Output */}
-        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div
-            style={{
-              padding: '0.625rem 1.25rem',
-              borderBottom: '1px solid var(--border-default)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexShrink: 0,
-            }}
-          >
-            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
-              Output
-            </span>
-          </div>
-
-          <div
-            className="markdown-body prose-reset"
-            style={{ flex: 1, overflowY: 'auto', padding: '1.25rem' }}
-          >
-            {output.trim() ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{output}</ReactMarkdown>
-            ) : (
-              <div
-                style={{
-                  height: '100%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '0.875rem',
-                  color: 'var(--text-muted)',
-                  userSelect: 'none',
-                }}
-              >
-                Output appears here.
-              </div>
-            )}
-          </div>
-        </div>
+          onCopy={handleCopy}
+        />
+        <OutputPanel output={output} />
       </div>
     </div>
   );
