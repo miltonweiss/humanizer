@@ -1,10 +1,12 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useEffect, useMemo, useState } from 'react';
+import { DefaultChatTransport } from 'ai';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { writingStyles } from '../../styles.js';
 import { getAssistantText } from '../lib/getAssistantText.js';
-import InputPanel from './components/InputPanel';
+import BottomBar from './components/BottomBar';
+import InputPanel, { HUMANIZE_FORM_ID } from './components/InputPanel';
 import OutputPanel from './components/OutputPanel';
 import SettingsPanel from './components/SettingsPanel';
 
@@ -58,14 +60,46 @@ export default function Chat() {
   }, [temperature, maxTokens, selectedModel, hasLoadedSettings]);
   
 
+  const [lastOutput, setLastOutput] = useState('');
+
   const stylePrompt = writingStyles.find((s) => s.id === selectedStyle)?.prompt || '';
-  const { messages, sendMessage, status } = useChat({ body: { stylePrompt } });
+  const settingsRef = useRef({ model: selectedModel, temperature, maxTokens, style: selectedStyle, stylePrompt });
+  settingsRef.current = { model: selectedModel, temperature, maxTokens, style: selectedStyle, stylePrompt };
+
+  const { messages, setMessages, sendMessage, status } = useChat({
+    transport: new DefaultChatTransport({
+      prepareSendMessagesRequest: ({ id, messages: msgs, trigger, messageId }) => ({
+        body: {
+          id,
+          messages: msgs,
+          trigger,
+          messageId,
+          model: settingsRef.current.model,
+          temperature: settingsRef.current.temperature,
+          maxTokens: settingsRef.current.maxTokens,
+          style: settingsRef.current.style,
+          stylePrompt: settingsRef.current.stylePrompt,
+        },
+      }),
+    }),
+  });
 
   const latestAssistantMessage = useMemo(
     () => [...messages].reverse().find((m) => m.role === 'assistant'),
     [messages]
   );
-  const output = useMemo(() => getAssistantText(latestAssistantMessage), [latestAssistantMessage]);
+  const outputFromMessages = useMemo(() => getAssistantText(latestAssistantMessage), [latestAssistantMessage]);
+  const output = outputFromMessages || lastOutput;
+
+  useEffect(() => {
+    if (status === 'ready' && messages.length > 0) {
+      const latest = [...messages].reverse().find((m) => m.role === 'assistant');
+      if (latest) {
+        setLastOutput(getAssistantText(latest));
+        setMessages([]);
+      }
+    }
+  }, [status, messages, setMessages]);
 
   const isLoading = status === 'streaming' || status === 'submitted';
 
@@ -83,33 +117,38 @@ export default function Chat() {
   function handleSubmit(e) {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
+    setLastOutput('');
     sendMessage({ text: input });
   }
 
   return (
-    <div className="background" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="background" style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <SettingsPanel
         temperature={temperature}
         maxTokens={maxTokens}
         selectedModel={selectedModel}
+        selectedStyle={selectedStyle}
         onTemperatureChange={setTemperature}
         onMaxTokensChange={setMaxTokens}
         onModelChange={setSelectedModel}
+        onStyleChange={setSelectedStyle}
       />
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', minHeight: 0, overflow: 'hidden' }}>
         <InputPanel
           input={input}
-          selectedStyle={selectedStyle}
-          isLoading={isLoading}
-          output={output}
-          copied={copied}
           onInputChange={setInput}
-          onStyleChange={setSelectedStyle}
           onSubmit={handleSubmit}
-          onCopy={handleCopy}
         />
         <OutputPanel output={output} />
       </div>
+      <BottomBar
+        input={input}
+        output={output}
+        isLoading={isLoading}
+        copied={copied}
+        formId={HUMANIZE_FORM_ID}
+        onCopy={handleCopy}
+      />
     </div>
   );
 }

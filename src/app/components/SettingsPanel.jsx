@@ -1,14 +1,15 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
+import { writingStyles } from '../../../styles.js';
 import { GearIcon, ClaudeIcon, GPTIcon, MistralIcon} from './icons';
 
-export default function SettingsPanel({ temperature, maxTokens, selectedModel, onTemperatureChange, onMaxTokensChange, onModelChange }) {
+export default function SettingsPanel({ temperature, maxTokens, selectedModel, selectedStyle, onTemperatureChange, onMaxTokensChange, onModelChange, onStyleChange }) {
   
   return (
     <>
       <button
-        className="fixed top-4 glass-bg border-none!important p-2 right-4"
+        className="fixed top-4 clean-bg border-none!important p-2 right-4"
         popoverTarget="popover-settings"
         style={{ anchorName: '--anchor-settings' }}
       >
@@ -52,11 +53,21 @@ export default function SettingsPanel({ temperature, maxTokens, selectedModel, o
           />
         </li>
         <li className="flex flex-col gap-1 py-2">
-        <select value={selectedModel} onChange={(e) => onModelChange(e.target.value)} className="select foreforeground select-sm">
+          <select value={selectedModel} onChange={(e) => onModelChange(e.target.value)} className="select foreforeground select-sm">
             <option disabled={true}>Model</option>
             <option value="claude-sonnet">Claude Sonnet 4.6</option>
             <option value="gpt">GPT-5.3</option>
-            <option value="mistral">Mistral Nemo</option>
+            <option value="mistral">Mistral Mini Creative</option>
+          </select>
+        </li>
+        <li className="flex flex-col gap-1 py-2">
+          <select value={selectedStyle} onChange={(e) => onStyleChange(e.target.value)} className="select foreforeground select-sm">
+            <option disabled={true}>Style</option>
+            {writingStyles.map((style) => (
+              <option key={style.id} value={style.id}>
+                {style.label}
+              </option>
+            ))}
           </select>
         </li>
       </ul>
