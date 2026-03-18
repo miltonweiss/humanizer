@@ -3,49 +3,57 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { writingStyles } from '../../styles.js';
 import { getAssistantText } from '../lib/getAssistantText.js';
 import BottomBar from './components/BottomBar';
-import InputPanel, { HUMANIZE_FORM_ID } from './components/InputPanel';
-import OutputPanel from './components/OutputPanel';
+import { HUMANIZE_FORM_ID } from './components/InputPanel';
 import SettingsPanel from './components/SettingsPanel';
 
 const SETTINGS_KEY = 'selfimpragent-settings';
+const REWRITE_TYPE_KEY = 'selfimpragent-rewrite-type';
 const DEFAULT_TEMPERATURE = 0.7;
-const DEFAULT_MAX_TOKENS = 2000;
 const DEFAULT_MODEL = 'claude-sonnet';
+const VALID_REWRITE_TYPES = ['light-rewrite', 'clean', 'linebreak', 'list', 'all'];
+const DEFAULT_REWRITE_TYPE = 'clean';
 
 function loadSettings() {
-  if (typeof window === 'undefined') return { temperature: DEFAULT_TEMPERATURE, maxTokens: DEFAULT_MAX_TOKENS, model: DEFAULT_MODEL };
+  if (typeof window === 'undefined') return { temperature: DEFAULT_TEMPERATURE, model: DEFAULT_MODEL };
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { temperature: DEFAULT_TEMPERATURE, maxTokens: DEFAULT_MAX_TOKENS, model: DEFAULT_MODEL };
+    if (!raw) return { temperature: DEFAULT_TEMPERATURE, model: DEFAULT_MODEL };
     const parsed = JSON.parse(raw);
     const validModels = ['claude-sonnet', 'gpt', 'mistral'];
     return {
       temperature: typeof parsed.temperature === 'number' ? parsed.temperature : DEFAULT_TEMPERATURE,
-      maxTokens: typeof parsed.maxTokens === 'number' ? parsed.maxTokens : DEFAULT_MAX_TOKENS,
       model: validModels.includes(parsed.model) ? parsed.model : DEFAULT_MODEL,
     };
   } catch {
-    return { temperature: DEFAULT_TEMPERATURE, maxTokens: DEFAULT_MAX_TOKENS, model: DEFAULT_MODEL };
+    return { temperature: DEFAULT_TEMPERATURE, model: DEFAULT_MODEL };
+  }
+}
+
+function loadRewriteType() {
+  if (typeof window === 'undefined') return DEFAULT_REWRITE_TYPE;
+  try {
+    const raw = localStorage.getItem(REWRITE_TYPE_KEY);
+    if (!raw) return DEFAULT_REWRITE_TYPE;
+    const parsed = raw;
+    return VALID_REWRITE_TYPES.includes(parsed) ? parsed : DEFAULT_REWRITE_TYPE;
+  } catch {
+    return DEFAULT_REWRITE_TYPE;
   }
 }
 
 export default function Chat() {
-  const [selectedStyle, setSelectedStyle] = useState(writingStyles[0].id);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
 
   const [temperature, setTemperature] = useState(DEFAULT_TEMPERATURE);
-  const [maxTokens, setMaxTokens] = useState(DEFAULT_MAX_TOKENS);
   const [hasLoadedSettings, setHasLoadedSettings] = useState(false);
 
   useEffect(() => {
     const s = loadSettings();
     setTemperature(s.temperature);
-    setMaxTokens(s.maxTokens);
     setSelectedModel(s.model);
     setHasLoadedSettings(true);
   }, []);
@@ -53,18 +61,34 @@ export default function Chat() {
   useEffect(() => {
     if (!hasLoadedSettings || typeof window === 'undefined') return;
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ temperature, maxTokens, model: selectedModel }));
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ temperature, model: selectedModel }));
     } catch {
       /* ignore */
     }
-  }, [temperature, maxTokens, selectedModel, hasLoadedSettings]);
+  }, [temperature, selectedModel, hasLoadedSettings]);
   
 
   const [lastOutput, setLastOutput] = useState('');
+  const [rewriteType, setRewriteType] = useState(DEFAULT_REWRITE_TYPE);
+  const [hasLoadedRewriteType, setHasLoadedRewriteType] = useState(false);
+  const [customRewriteLoading, setCustomRewriteLoading] = useState(false);
 
-  const stylePrompt = writingStyles.find((s) => s.id === selectedStyle)?.prompt || '';
-  const settingsRef = useRef({ model: selectedModel, temperature, maxTokens, style: selectedStyle, stylePrompt });
-  settingsRef.current = { model: selectedModel, temperature, maxTokens, style: selectedStyle, stylePrompt };
+  useEffect(() => {
+    setRewriteType(loadRewriteType());
+    setHasLoadedRewriteType(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedRewriteType || typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(REWRITE_TYPE_KEY, rewriteType);
+    } catch {
+      /* ignore */
+    }
+  }, [rewriteType, hasLoadedRewriteType]);
+
+  const settingsRef = useRef({ model: selectedModel, temperature });
+  settingsRef.current = { model: selectedModel, temperature };
 
   const { messages, setMessages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
@@ -76,9 +100,6 @@ export default function Chat() {
           messageId,
           model: settingsRef.current.model,
           temperature: settingsRef.current.temperature,
-          maxTokens: settingsRef.current.maxTokens,
-          style: settingsRef.current.style,
-          stylePrompt: settingsRef.current.stylePrompt,
         },
       }),
     }),
@@ -95,13 +116,15 @@ export default function Chat() {
     if (status === 'ready' && messages.length > 0) {
       const latest = [...messages].reverse().find((m) => m.role === 'assistant');
       if (latest) {
-        setLastOutput(getAssistantText(latest));
+        const text = getAssistantText(latest);
+        setLastOutput(text);
+        setInput(text);
         setMessages([]);
       }
     }
   }, [status, messages, setMessages]);
 
-  const isLoading = status === 'streaming' || status === 'submitted';
+  const isLoading = status === 'streaming' || status === 'submitted' || customRewriteLoading;
 
   async function handleCopy() {
     if (!output.trim()) return;
@@ -114,33 +137,98 @@ export default function Chat() {
     }
   }
 
-  function handleSubmit(e) {
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    if (prevStatusRef.current !== 'streaming' && status === 'streaming') {
+      setLastOutput('');
+    }
+    prevStatusRef.current = status;
+  }, [status]);
+
+  async function handleSubmit(e) {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    const text = output || input;
+    if (!text.trim() || isLoading) return;
+
+    if (rewriteType === 'light-rewrite') {
+      sendMessage({ text });
+      return;
+    }
+
+    setCustomRewriteLoading(true);
     setLastOutput('');
-    sendMessage({ text: input });
+    try {
+      const res = await fetch(`/api/rewrite/${rewriteType}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const result = data.text ?? '';
+      setLastOutput(result);
+      setInput(result);
+    } catch {
+      setLastOutput(text);
+      setInput(text);
+    } finally {
+      setCustomRewriteLoading(false);
+    }
   }
 
+  function handleContentChange(value) {
+    setInput(value);
+    if (lastOutput && !isLoading) setLastOutput(value);
+  }
+
+  const textValue = output || input;
+
   return (
-    <div className="background" style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}>
-      <SettingsPanel
-        temperature={temperature}
-        maxTokens={maxTokens}
-        selectedModel={selectedModel}
-        selectedStyle={selectedStyle}
-        onTemperatureChange={setTemperature}
-        onMaxTokensChange={setMaxTokens}
-        onModelChange={setSelectedModel}
-        onStyleChange={setSelectedStyle}
-      />
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', minHeight: 0, overflow: 'hidden' }}>
-        <InputPanel
-          input={input}
-          onInputChange={setInput}
-          onSubmit={handleSubmit}
+    <div className="background" style={{ height: '100dvh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {/* App header */}
+      <header className="app-header">
+        <span className="app-wordmark">Rewrite</span>
+        <SettingsPanel
+          temperature={temperature}
+          selectedModel={selectedModel}
+          onTemperatureChange={setTemperature}
+          onModelChange={setSelectedModel}
         />
-        <OutputPanel output={output} />
-      </div>
+      </header>
+
+      <form
+        id={HUMANIZE_FORM_ID}
+        onSubmit={handleSubmit}
+        style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+      >
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', paddingTop: '44px' }}>
+          <textarea
+            className={`text-primary text-content${isLoading ? ' loading-shimmer' : ''}`}
+            value={textValue}
+            onChange={(e) => handleContentChange(e.target.value)}
+            readOnly={isLoading}
+            placeholder="Paste your text here…"
+            style={{
+              width: '100%',
+              height: '100%',
+              resize: 'none',
+              border: 'none',
+              outline: 'none',
+              padding: 'clamp(1.5rem, 4vw, 3rem)',
+              paddingTop: 'clamp(1.5rem, 4vw, 2.5rem)',
+              paddingBottom: '5.5rem',
+              fontSize: 'clamp(0.9375rem, 1.5vw, 1.0625rem)',
+              lineHeight: 1.65,
+              color: 'var(--text-primary)',
+              background: 'transparent',
+              caretColor: 'var(--accent)',
+              maxWidth: '72ch',
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              display: 'block',
+            }}
+          />
+        </div>
+      </form>
       <BottomBar
         input={input}
         output={output}
@@ -148,6 +236,8 @@ export default function Chat() {
         copied={copied}
         formId={HUMANIZE_FORM_ID}
         onCopy={handleCopy}
+        rewriteType={rewriteType}
+        onRewriteTypeChange={setRewriteType}
       />
     </div>
   );

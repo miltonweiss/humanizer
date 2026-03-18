@@ -9,6 +9,7 @@ Rewrite the provided text so it reads naturally while preserving the exact meani
 
 The goal is to remove the stiffness typical of AI-generated writing while keeping the original ideas, information, and level of detail intact.
 
+Do not use Markdown or formatting symbols (no **, *, _, etc.). Return plain text only.
 GUIDELINES
 
 - Preserve meaning exactly. Do not add or remove information.
@@ -32,6 +33,12 @@ CONSTRAINTS
 OUTPUT
 
 Return only the rewritten text.
+
+
+Write in clear, straightforward language.
+Use simple, direct sentences and avoid unnecessary complexity.
+Focus on clarity and readability while preserving all meaning.
+The writing should feel natural but unobtrusive.
 
 `;
 

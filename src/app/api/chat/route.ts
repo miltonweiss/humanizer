@@ -4,8 +4,12 @@ import { openai } from "@ai-sdk/openai";
 import { prompt } from '../../../../prompt';
 import { smoothStream } from "ai"
 import { mistral } from '@ai-sdk/mistral';
+
+
+
+
 export async function POST(req: Request) {
-  const { messages, stylePrompt, temperature, maxTokens, model }: { messages: UIMessage[]; stylePrompt?: string, temperature: number, maxTokens: number, model: string } = await req.json();
+  const { messages, temperature, model }: { messages: UIMessage[]; temperature: number; model: string } = await req.json();
 
   const userMessages = messages.filter((m) => m.role === 'user');
   const lastUserMessage = userMessages[userMessages.length - 1];
@@ -18,18 +22,12 @@ export async function POST(req: Request) {
         ? mistral("labs-mistral-small-creative")
         : anthropic("claude-sonnet-4-6");
 
-  const systemPrompt = stylePrompt
-    ? `${prompt}\n\n---\n\nSTYLE\n\n
-    Strictly follow the style instructions:
-    ${stylePrompt}`
-    : prompt;
-
   const result = streamText({
     model: modelInstance,
-    system: systemPrompt,
+    system: prompt,
     messages: await convertToModelMessages(currentMessages),
     temperature: temperature,
-    maxOutputTokens: maxTokens,
+    maxOutputTokens: 4096,
     experimental_transform: smoothStream({
       delayInMs: 10, // optional: defaults to 10ms
       chunking: 'word', // optional: defaults to 'word'

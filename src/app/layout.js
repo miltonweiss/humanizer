@@ -1,4 +1,5 @@
 import localFont from "next/font/local";
+import { Geist } from "next/font/google";
 import "./globals.css";
 
 const literata = localFont({
@@ -6,17 +7,22 @@ const literata = localFont({
   variable: "--font-literata",
 });
 
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+  weight: ["300", "400", "500", "600"],
+  display: "swap",
+});
+
 export const metadata = {
-  title: "AI Humanizer",
-  description: "AI Humanizer is a tool that helps you humanize your AI-generated text.",
+  title: "Rewrite",
+  description: "A premium text rewriting tool.",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body
-        className={`${literata.variable} antialiased`}
-      >
+      <body className={`${literata.variable} ${geist.variable} antialiased`}>
         {children}
       </body>
     </html>
